@@ -1,8 +1,17 @@
 import streamlit as st
+
 import pandas as pd
 import geopandas as gpd
 
 import plotly.express as px
+
+import folium
+from folium import Marker
+from folium.plugins import MarkerCluster
+from folium.plugins import HeatMap
+from streamlit_folium import folium_static
+
+import math
 
 
 # Configuración de la página
@@ -84,3 +93,96 @@ if archivo_registros_presencia is not None:
         fig = px.bar(registros_presencia_grp_anio, 
                     labels={'eventDate':'Año', 'value':'Registros de presencia'})
         st.plotly_chart(fig)
+
+    with col2:
+        # Gráficos de estacionalidad de registros de presencia por mes
+        st.header('Estacionalidad de registros por mes')
+        registros_presencia_grp_mes = pd.DataFrame(registros_presencia.groupby(registros_presencia['eventDate'].dt.month).count().eventDate)
+        registros_presencia_grp_mes.columns = ['registros_presencia']
+        # streamlit
+        # st.subheader('st.area_chart()')
+        # st.area_chart(registros_presencia_grp_mes)
+        # plotly
+        # st.subheader('px.area()')
+        fig = px.area(registros_presencia_grp_mes, 
+                    labels={'eventDate':'Mes', 'value':'Registros de presencia'})
+        st.plotly_chart(fig)
+
+
+    # Gráficos de cantidad de registros de presencia por ASP
+    # "Join" para agregar la columna con el conteo a la capa de ASP
+    asp_registros = asp_registros.join(asp.set_index('codigo'), on='codigo', rsuffix='_b')
+    # Dataframe filtrado para usar en graficación
+    asp_registros_grafico = asp_registros.loc[asp_registros['cantidad_registros_presencia'] > 0, 
+                                                            ["nombre_asp", "cantidad_registros_presencia"]].sort_values("cantidad_registros_presencia", ascending=[False]).head(15)
+    asp_registros_grafico = asp_registros_grafico.set_index('nombre_asp')  
+
+    with col1:
+        st.header('Cantidad de registros por ASP')
+        # streamlit
+        # st.subheader('st.bar_chart()')
+        # st.bar_chart(asp_registros_grafico)    
+        # plotly
+        # st.subheader('px.bar()')
+        fig = px.bar(asp_registros_grafico, 
+                    labels={'nombre_asp':'ASP', 'cantidad_registros_presencia':'Registros de presencia'})
+        st.plotly_chart(fig)         
+
+    with col2:        
+        # st.subheader('px.pie()')        
+        st.header('Porcentaje de registros por ASP')
+        fig = px.pie(asp_registros_grafico, 
+                    names=asp_registros_grafico.index,
+                    values='cantidad_registros_presencia')
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig)  
+
+    # Mapa de registros de presencia
+    st.header('Mapa de registros de presencia')
+    # st.subheader('st.map()')
+    st.map(registros_presencia.rename(columns = {'decimalLongitude':'longitude', 'decimalLatitude':'latitude'}))                
+
+    # Mapa de calor y de registros agrupados
+    st.header('Mapa de calor y de registros agrupados')
+    # st.subheader('folium.plugins.HeatMap(), folium.plugins.MarkerCluster()')    
+    # Capa base
+    m = folium.Map(location=[9.6, -84.2], tiles='CartoDB dark_matter', zoom_start=8)
+    # Capa de calor
+    HeatMap(data=registros_presencia[['decimalLatitude', 'decimalLongitude']],
+            name='Mapa de calor').add_to(m)
+    # Capa de ASP
+    folium.GeoJson(data=asp, name='ASP').add_to(m)
+    # Capa de registros de presencia agrupados
+    mc = MarkerCluster(name='Registros agrupados')
+    for idx, row in registros_presencia.iterrows():
+        if not math.isnan(row['decimalLongitude']) and not math.isnan(row['decimalLatitude']):
+            mc.add_child(Marker([row['decimalLatitude'], row['decimalLongitude']], 
+                                popup=row['species']))
+    m.add_child(mc)
+    # Control de capas
+    folium.LayerControl().add_to(m)    
+    # Despliegue del mapa
+    folium_static(m)    
+
+    # Mapa de coropletas de registros de presencia en ASP
+    st.header('Mapa de cantidad de registros en ASP')
+    # st.subheader('folium.Choropleth()')    
+    # Capa base
+    m = folium.Map(location=[9.6, -84.2], tiles='CartoDB positron', zoom_start=8)
+    # Capa de coropletas
+    folium.Choropleth(
+        name="Cantidad de registros en ASP",
+        geo_data=asp,
+        data=asp_registros,
+        columns=['codigo', 'cantidad_registros_presencia'],
+        bins=8,
+        key_on='feature.properties.codigo',
+        fill_color='Reds', 
+        fill_opacity=0.5, 
+        line_opacity=1,
+        legend_name='Cantidad de registros de presencia',
+        smooth_factor=0).add_to(m)
+    # Control de capas
+    folium.LayerControl().add_to(m)        
+    # Despliegue del mapa
+    folium_static(m)          
